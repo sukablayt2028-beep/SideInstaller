@@ -1,0 +1,57 @@
+name: Build and upload iOS app
+
+on:
+  push:
+    branches: [ main, "resign-install-feature" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v4
+
+    - name: Install Homebrew packages (xcodegen, xcpretty)
+      run: |
+        set -e
+        echo "Installing XcodeGen and xcpretty..."
+        brew update
+        brew install xcodegen || true
+        gem install xcpretty --no-document || true
+
+    - name: Generate Xcode project
+      run: |
+        set -e
+        xcodegen generate --spec project.yml
+
+    - name: Build (iOS Simulator, Release)
+      run: |
+        set -e
+        echo "Building SideInstaller for iOS Simulator (Release)..."
+        xcodebuild -project SideInstaller.xcodeproj \
+          -scheme SideInstaller \
+          -configuration Release \
+          -sdk iphonesimulator \
+          -destination 'platform=iOS Simulator,name=iPhone 14' \
+          clean build | xcpretty
+
+    - name: Collect built app
+      run: |
+        set -e
+        mkdir -p output
+        APP_PATH="build/Release-iphonesimulator/SideInstaller.app"
+        if [ -d "$APP_PATH" ]; then
+          cp -R "$APP_PATH" output/
+          ls -la output
+        else
+          echo "Expected app not found at $APP_PATH" ; exit 1
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SideInstaller-simulator-app
+        path: output/SideInstaller.app
