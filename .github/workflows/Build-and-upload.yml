@@ -27,28 +27,49 @@ jobs:
         set -e
         xcodegen generate --spec project.yml
 
-    - name: Build (iOS Simulator, Release)
+    - name: Show available simulator destinations (diagnostic)
       run: |
         set -e
-        echo "Building SideInstaller for iOS Simulator (Release)..."
+        echo "Available destinations for the SideInstaller scheme:"
+        xcodebuild -project SideInstaller.xcodeproj -scheme SideInstaller -sdk iphonesimulator -showdestinations || true
+
+    - name: Build (iOS Simulator, Release) — generic simulator
+      run: |
+        set -e
+        echo "Building SideInstaller for iOS Simulator (Release) using generic platform..."
         xcodebuild -project SideInstaller.xcodeproj \
           -scheme SideInstaller \
           -configuration Release \
           -sdk iphonesimulator \
-          -destination 'platform=iOS Simulator,name=iPhone 14' \
-          clean build | xcpretty
+          -destination 'generic/platform=iOS Simulator' \
+          clean build CODE_SIGNING_ALLOWED=NO | xcpretty
 
     - name: Collect built app
       run: |
         set -e
         mkdir -p output
-        APP_PATH="build/Release-iphonesimulator/SideInstaller.app"
-        if [ -d "$APP_PATH" ]; then
-          cp -R "$APP_PATH" output/
-          ls -la output
-        else
-          echo "Expected app not found at $APP_PATH" ; exit 1
+        # xcodebuild writes build products into ./build/ for generated projects by default,
+        # but DerivedData can be used in other setups. Try both common locations.
+        APP_PATHS=(
+          "build/Release-iphonesimulator/SideInstaller.app"
+          "build/Release/SideInstaller.app"
+          "$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 3 -type d -name 'Build' -prune -exec find {} -type d -path '*/Products/Release-iphonesimulator/SideInstaller.app' -print \; )"
+        )
+        FOUND=""
+        for p in "${APP_PATHS[@]}"; do
+          if [ -d "$p" ]; then
+            FOUND="$p"
+            break
+          fi
+        done
+        if [ -z "$FOUND" ]; then
+          echo "Expected app not found in common build locations. Listing build/ and DerivedData:"
+          ls -la build || true
+          ls -la ~/Library/Developer/Xcode/DerivedData || true
+          exit 1
         fi
+        cp -R "$FOUND" output/
+        ls -la output
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
