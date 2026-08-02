@@ -88,6 +88,26 @@ tunnel like LocalDevVPN leaves nothing to reach a blocked GitHub through. Two wa
   Either way it installs that file instead of downloading anything, and appears under Settings ›
   Downloaded IPAs — delete it there to go back to downloading.
 
+### Resign & Install (custom IPA)
+
+If you imported an IPA (Custom .ipa), SideInstaller now shows a clear "Resign & Install" button in the
+Install card. Use it to sign the imported IPA with your Apple ID (the app prompts for 2FA if needed) and
+install it to a paired device. Typical flow:
+
+1. Pair your iPhone in the Pairing tab (or run the one-click flow's Pair step) so the app can open a loopback
+   tunnel and capture the device UDID.
+2. Import the IPA via Install › Custom .ipa › Import .ipa (or place it in Files › On My iPhone › SideInstaller).
+3. In Install, pick Custom and tap **Resign & Install**.
+4. The app will sign (si_sign_ipa) and then upload the signed bundle to the device via installation_proxy.
+
+Notes:
+
+- Make sure the device is paired and a loopback VPN is active before starting.
+- If Apple rejects signing due to "maximum number of certificates" you'll see a guide and can revoke old
+  certs in the Certificates tab.
+- Device registration failures (Apple error 8220) will be surfaced with the UDID so you can add the device
+  manually if needed.
+
 ## Is SideInstaller safe?
 
 SideInstaller is built with safety and privacy in mind. The app is fully local and open source, which means
