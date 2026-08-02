@@ -1,4 +1,4 @@
-name: Build and upload iOS app
+name: CI — Build Rust FFI + iOS app (Simulator) and upload artifacts
 
 on:
   push:
@@ -9,18 +9,59 @@ on:
 jobs:
   build:
     runs-on: macos-latest
+    env:
+      # Force a known Xcode developer dir that exists on runners we observed
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      # Optional: make rust builds deterministic about path embedding (build-rust.sh uses this)
+      IPHONEOS_DEPLOYMENT_TARGET: 17.4
 
     steps:
     - name: Checkout source
       uses: actions/checkout@v4
 
-    - name: Install Homebrew packages (xcodegen, xcpretty)
+    - name: Install Homebrew packages (xcodegen, xcpretty, jq)
       run: |
         set -e
-        echo "Installing XcodeGen and xcpretty..."
         brew update
         brew install xcodegen || true
         gem install xcpretty --no-document || true
+        brew install jq || true
+
+    - name: Install Rust (rustup) and targets
+      run: |
+        set -e
+        if ! command -v rustup >/dev/null 2>&1; then
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
+        fi
+        source "$HOME/.cargo/env"
+        rustup default stable || true
+        rustup toolchain install stable || true
+        rustup target add aarch64-apple-ios aarch64-apple-ios-sim || true
+
+    - name: (Optional) Install system deps for native crates
+      run: |
+        set -e
+        # If rust-core relies on native libs (libimobiledevice, libplist, openssl, etc.)
+        # uncomment the packages you need. Installing them is environment-dependent.
+        # brew install libimobiledevice libplist libzip openssl pkg-config || true
+        echo "Skip optional native deps by default — enable installs if build requires them."
+
+    - name: Make build-rust.sh executable
+      run: chmod +x build-rust.sh
+
+    - name: Build Rust FFI and create SideInstallerFFI.xcframework
+      # Uses the repo's build-rust.sh which builds aarch64-apple-ios and aarch64-apple-ios-sim
+      run: |
+        set -euo pipefail
+        source "$HOME/.cargo/env" || true
+        export DEVELOPER_DIR="${DEVELOPER_DIR}"
+        ./build-rust.sh
+
+    - name: Upload xcframework artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SideInstallerFFI.xcframework
+        path: SideInstallerFFI.xcframework
 
     - name: Generate Xcode project
       run: |
@@ -30,48 +71,37 @@ jobs:
     - name: Show available simulator destinations (diagnostic)
       run: |
         set -e
-        echo "Available destinations for the SideInstaller scheme:"
         xcodebuild -project SideInstaller.xcodeproj -scheme SideInstaller -sdk iphonesimulator -showdestinations || true
 
-    - name: Build (iOS Simulator, Release) — generic simulator
+    - name: Build iOS app (Simulator, Release)
       run: |
         set -e
-        echo "Building SideInstaller for iOS Simulator (Release) using generic platform..."
+        # Build to a known DerivedData path so it's easy to find artifacts
+        DERIVED_DATA="$(pwd)/build_derived"
         xcodebuild -project SideInstaller.xcodeproj \
           -scheme SideInstaller \
           -configuration Release \
           -sdk iphonesimulator \
           -destination 'generic/platform=iOS Simulator' \
+          -derivedDataPath "$DERIVED_DATA" \
           clean build CODE_SIGNING_ALLOWED=NO | xcpretty
 
     - name: Collect built app
       run: |
         set -e
         mkdir -p output
-        # xcodebuild writes build products into ./build/ for generated projects by default,
-        # but DerivedData can be used in other setups. Try both common locations.
-        APP_PATHS=(
-          "build/Release-iphonesimulator/SideInstaller.app"
-          "build/Release/SideInstaller.app"
-          "$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 3 -type d -name 'Build' -prune -exec find {} -type d -path '*/Products/Release-iphonesimulator/SideInstaller.app' -print \; )"
-        )
-        FOUND=""
-        for p in "${APP_PATHS[@]}"; do
-          if [ -d "$p" ]; then
-            FOUND="$p"
-            break
-          fi
-        done
-        if [ -z "$FOUND" ]; then
-          echo "Expected app not found in common build locations. Listing build/ and DerivedData:"
-          ls -la build || true
-          ls -la ~/Library/Developer/Xcode/DerivedData || true
+        APP_PATH="$PWD/build_derived/Build/Products/Release-iphonesimulator/SideInstaller.app"
+        if [ -d "$APP_PATH" ]; then
+          cp -R "$APP_PATH" output/
+          ls -la output
+        else
+          echo "Expected app not found at $APP_PATH"
+          echo "Listing derived data Build/Products tree for debugging:"
+          find "$PWD/build_derived" -maxdepth 5 -type d -name 'SideInstaller.app' -print || true
           exit 1
         fi
-        cp -R "$FOUND" output/
-        ls -la output
 
-    - name: Upload artifact
+    - name: Upload built app artifact
       uses: actions/upload-artifact@v4
       with:
         name: SideInstaller-simulator-app
